@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <pthread.h>
 #
 
 #define DEFAULT_LISTEN_PORT 56300
@@ -20,7 +21,6 @@ int main(int argc, char **argv)
     int pipe_fdd[2];
     pipe(pipe_fdd);
 
-
     int test = 50;
     /* DB */
     switch (fork())
@@ -36,7 +36,8 @@ int main(int argc, char **argv)
         snprintf(arg1, sizeof(arg1), "%d", pipe_fd[0]);
         snprintf(arg2, sizeof(arg2), "%d", pipe_fdd[1]);
 
-        if(execl("database", arg1, arg2, NULL) < 0){
+        if (execl("database", arg1, arg2, NULL) < 0)
+        {
             perror("Chyba pri execl :");
             exit(-1);
         }
@@ -45,7 +46,10 @@ int main(int argc, char **argv)
     close(pipe_fd[0]);
     close(pipe_fdd[1]);
 
-    int temp = 0;
+    int write_fd = pipe_fd[1];
+    int read_fd = pipe_fdd[0];
+
+    /*int temp = 0;
     while(1){
         sleep(1);
         if(write(pipe_fd[1], &temp, sizeof(int)) < 0){
@@ -53,31 +57,69 @@ int main(int argc, char **argv)
             exit(-5);
         }
         temp++;
+    }*/
+
+    /* MUTEX TEST */
+
+    pthread_mutex_t mutualExclusion;
+    pthread_mutexattr_t atributy;
+
+    pthread_mutexattr_init(&atributy);
+    pthread_mutexattr_setpshared(&atributy, PTHREAD_PROCESS_SHARED);
+    if ((pthread_mutex_init(&mutualExclusion, &atributy)) < 0)
+    {
+        perror("Nepodarilo sa pripojit na mutex\n");
+        exit(-2);
     }
 
-    exit(0);
+    switch (fork())
+    {
+    case -1:
+        perror("Chyba pri forkovani:");
+        exit(-1);
+    case 0:
+        if (pthread_mutex_lock(&mutualExclusion))
+        {
+            perror("Child:Chyba zamykania\n");
+            exit(-4);
+        }
 
-    switch(fork()){
-        case -1:
-            perror("Chyba pri forkovani:");
+        int temp;
+        if(read(read_fd, &temp, sizeof(int)) < 0){
+            perror("Chyba pri citani zo socketu");
             exit(-1);
-        case 0:
-            sleep(1);
-            for(int i = 0; i <= 5; i++){
-                int tmp;
-                read(pipe_fdd[0], &tmp, sizeof(int));
-                printf("Child :%d\n", tmp);
-                sleep(1);
-            }
-            break;
-        default:
-            for(int i = 0; i <= 5; i++){
-                int tmp;
-                read(pipe_fdd[0], &tmp, sizeof(int));
-                printf("Parent :%d\n", tmp);
-                sleep(1);
-            }
-            break;
+        }
+
+
+        printf("Cild precital %d\n");
+
+        if (pthread_mutex_unlock(&mutualExclusion));
+        {
+            perror("Child:Chyba odomykania\n");
+            exit(-4);
+        }
+        break;
+    default:
+        if (pthread_mutex_lock(&mutualExclusion))
+        {
+            perror("Rodic:Chyba zamykania\n");
+            exit(-4);
+        }
+
+        int temp;
+        if(read(read_fd, &temp, sizeof(int)) < 0){
+            perror("Chyba pri citani zo socketu");
+            exit(-1);
+        }
+
+
+        printf("Rodic precital %d\n");
+
+        if (pthread_mutex_unlock(&mutualExclusion));
+        {
+            perror("Rodic:Chyba odomykania\n");
+            exit(-4);
+        }
     }
 
     exit(0);
@@ -139,16 +181,16 @@ int main(int argc, char **argv)
 
         printf("Server sa vypina.\n");*/
 
-        return 0;
-    }
+    return 0;
+}
 
-    void closeSocket(int Socket)
+void closeSocket(int Socket)
+{
+    if (close(Socket) < 0)
     {
-        if (close(Socket) < 0)
-        {
-            perror("Chyba pri zatvarani socketu");
-            exit(-8);
-        }
-
-        return;
+        perror("Chyba pri zatvarani socketu");
+        exit(-8);
     }
+
+    return;
+}
