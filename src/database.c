@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h> /* memset() */
 #include "define/metadata.h"
 #include "define/request_respons/database.h"
 #include "define/peer.h"
@@ -11,6 +12,7 @@ argv[1] - read fd
 argv[2] - write fd
 
 */
+
 
 #define MAX_PEERLIST 10
 
@@ -35,10 +37,15 @@ int main(int argc, char **argv)
             exit(-1);
         }
 
+        printf("Database - Request : %d\n", request);
+
+        struct peer new_peer;
+        struct metadata new_metadata;
+        
         switch (request)
         {
         case NEW_PEER:
-            struct peer new_peer;
+
             if (read(read_fd, &new_peer, sizeof(struct peer)) < 0)
             {
                 perror("DB - chyba pri nacitani z fd");
@@ -51,8 +58,14 @@ int main(int argc, char **argv)
 
             break;
 
+        case DELETE_PEER:
+
+            /* I WAS HERE */
+
+            break;
+
         case NEW_METADATA:
-            struct metadata new_metadata;
+            
             if (read(read_fd, &new_metadata, sizeof(struct metadata)) < 0)
             {
                 perror("DB - chyba pri nacitani z fd");
@@ -63,6 +76,15 @@ int main(int argc, char **argv)
             {
                 meta_data = new_metadata;
                 is_metadata = 1;
+            }
+
+            break;
+
+        case DELETE_METADATA:
+            if (is_metadata)
+            {
+                memset(&meta_data, sizeof(struct metadata), 0);
+                is_metadata = 0;
             }
 
             break;

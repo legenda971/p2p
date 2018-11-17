@@ -1,11 +1,11 @@
-#include <stdio.h>  /* printf() */
-#include <stdlib.h> /* exit(), malloc(), free() */
+#include <stdio.h>      /* printf() */
+#include <stdlib.h>     /* exit(), malloc(), free() */
 #include <sys/socket.h>
-#include <sys/types.h> /* key_t, sem_t, pid_t */
+#include <sys/types.h>  /* key_t, sem_t, pid_t */
 #include <netdb.h>
 #include <unistd.h>
 #include <semaphore.h>
-#include <fcntl.h> /* O_CREAT */
+#include <fcntl.h>      /* O_CREAT */
 
 #define DEFAULT_LISTEN_PORT 56300
 #define SEMAPHONE_NAME "mySemaphone"
@@ -157,14 +157,17 @@ int main(int argc, char **argv)
             exit(-7);
 
         case 0:
-            afterFort();
+            closeSocket(socketListen);
+
+
         default:
             closeSocket(socketClient);
         }
 
         printf("Server sa vypina.\n");
 
-    return 0;
+        return 0;
+    }
 }
 
 void closeSocket(int Socket)
