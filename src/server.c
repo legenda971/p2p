@@ -1,13 +1,14 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include <stdio.h>  /* printf() */
+#include <stdlib.h> /* exit(), malloc(), free() */
 #include <sys/socket.h>
-#include <sys/types.h>
+#include <sys/types.h> /* key_t, sem_t, pid_t */
 #include <netdb.h>
 #include <unistd.h>
-#include <pthread.h>
-#
+#include <semaphore.h>
+#include <fcntl.h> /* O_CREAT */
 
 #define DEFAULT_LISTEN_PORT 56300
+#define SEMAPHONE_NAME "mySemaphone"
 
 void closeSocket(int Socket);
 void afterFork();
@@ -49,80 +50,62 @@ int main(int argc, char **argv)
     int write_fd = pipe_fd[1];
     int read_fd = pipe_fdd[0];
 
-    /*int temp = 0;
-    while(1){
-        sleep(1);
-        if(write(pipe_fd[1], &temp, sizeof(int)) < 0){
-            perror("Chyba pri zapisovani do sockutu :");
-            exit(-5);
-        }
-        temp++;
-    }*/
+    /* Shared semaphore TEST */
 
-    /* MUTEX TEST */
-
-    pthread_mutex_t mutualExclusion;
-    pthread_mutexattr_t atributy;
-
-    pthread_mutexattr_init(&atributy);
-    pthread_mutexattr_setpshared(&atributy, PTHREAD_PROCESS_SHARED);
-    if ((pthread_mutex_init(&mutualExclusion, &atributy)) < 0)
+    sem_t *mutex;
+    if ((mutex = sem_open(SEMAPHONE_NAME, O_CREAT | O_EXCL, 0644, 1)) == SEM_FAILED)
     {
-        perror("Nepodarilo sa pripojit na mutex\n");
-        exit(-2);
+        perror("Chyba pri vytvarani semaphoru :");
+        exit(1);
     }
 
+    /*
     switch (fork())
     {
     case -1:
         perror("Chyba pri forkovani:");
         exit(-1);
     case 0:
-        if (pthread_mutex_lock(&mutualExclusion))
+        while (1)
         {
-            perror("Child:Chyba zamykania\n");
-            exit(-4);
-        }
+            sem_wait(mutex);
+            printf("Dieta vstupuje do kritickej casti\n");
 
-        int temp;
-        if(read(read_fd, &temp, sizeof(int)) < 0){
-            perror("Chyba pri citani zo socketu");
-            exit(-1);
-        }
+            if (read(read_fd, &temp, sizeof(int)) < 0)
+            {
+                perror("Chyba pri citani zo socketu\n");
+                exit(-1);
+            }
 
+            printf("Dieta precital %d\n", temp);
 
-        printf("Cild precital %d\n");
-
-        if (pthread_mutex_unlock(&mutualExclusion));
-        {
-            perror("Child:Chyba odomykania\n");
-            exit(-4);
+            sem_post(mutex);
+            printf("Dieta vystupuje z kritickej casti\n");
+            //sleep(0.1);
         }
         break;
     default:
-        if (pthread_mutex_lock(&mutualExclusion))
+        while (1)
         {
-            perror("Rodic:Chyba zamykania\n");
-            exit(-4);
-        }
+            sem_wait(mutex);
+            printf("Rodic vstupuje do kritickej casti\n");
 
-        int temp;
-        if(read(read_fd, &temp, sizeof(int)) < 0){
-            perror("Chyba pri citani zo socketu");
-            exit(-1);
-        }
+            if (read(read_fd, &temp, sizeof(int)) < 0)
+            {
+                perror("Chyba pri citani zo socketu\n");
+                exit(-1);
+            }
 
+            printf("Rodic precital %d\n", temp);
 
-        printf("Rodic precital %d\n");
+            sem_post(mutex);
 
-        if (pthread_mutex_unlock(&mutualExclusion));
-        {
-            perror("Rodic:Chyba odomykania\n");
-            exit(-4);
+            printf("Rodic vystupuje z kritickej casti\n");
+            //sleep(0.1);
         }
     }
 
-    exit(0);
+    exit(0);*/
 
     /* Vytvorenie socketu */
     int socketListen;
@@ -155,7 +138,7 @@ int main(int argc, char **argv)
     printf("Socket bol uspesne vytoreny a nastavený.\n");
 
     /* Vytvorenie spojeni s clientami */
-    /*int socketClient;
+    int socketClient;
     struct sockaddr_in addressClient;
     socklen_t size;
     while (1)
@@ -179,7 +162,7 @@ int main(int argc, char **argv)
             closeSocket(socketClient);
         }
 
-        printf("Server sa vypina.\n");*/
+        printf("Server sa vypina.\n");
 
     return 0;
 }
