@@ -1,5 +1,5 @@
 typedef struct metadata {
     char name[20];
-    unsigned int lenght;
-    unsigned int pieses_lenght;
+    unsigned int file_size;
+    unsigned int size_block;
 }metadata;

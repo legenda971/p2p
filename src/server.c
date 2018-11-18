@@ -158,7 +158,10 @@ int main(int argc, char **argv)
 
         case 0:
             closeSocket(socketListen);
+            while(1){
 
+            }
+            exit(0);
 
         default:
             closeSocket(socketClient);
