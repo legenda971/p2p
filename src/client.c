@@ -5,11 +5,40 @@
 #include <math.h>    /* round() */
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netdb.h>
 
 #include "define/metadata.h"
+#include "define/request_respons/database.h"
+
+#define PORT 56321
 
 int main(int argc, char **argv)
 {
+    /* Socket initial */
+
+    int socketListen;
+    if ((socketListen = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        perror("Chyba pri vytvarani socktu.\n");
+        exit(-1);
+    }
+
+    struct sockaddr_in adresa;
+    adresa.sin_family = AF_INET;
+    adresa.sin_port = htons(PORT);
+    adresa.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if ((connect(socketListen, (struct sockaddr *)&adresa, sizeof(adresa))) != 0)
+    {
+        perror("Chyba pri pripajani sa:\n");
+        // cislo suborou musi byt 0 alebo kladne, socked file descriptor je cislo suboru
+        exit(-1004);
+    }
+
+    printf("Client - Pripojený");
+
     /* NCURSES initial */
     initscr();
     noecho();
@@ -24,7 +53,6 @@ int main(int argc, char **argv)
 
     int y_middle = y_max / 2;
     int x_middle = x_max / 2;
-    /* Connect to server */
 
     const char *menu[] = {"Nahrat subor", "Stiahnut Subor", "Nastavenia", "Koniec"};
     int size_menu = sizeof(menu) / sizeof(menu[0]);
@@ -162,12 +190,22 @@ int main(int argc, char **argv)
                 struct metadata new_metadata;
                 new_metadata.size_block = velkost_bloku;
                 new_metadata.file_size = file_stat.st_size;
-                strcpy_s(new_metadata.name, sizeof(new_metadata.name), name_dir);
+                strncpy(new_metadata.name, name_dir, sizeof(new_metadata.name));
 
-
-                while ((akcia = wgetch(menuwin)) != 10)
-                    ;
+                while ((akcia = wgetch(menuwin)) != 10);
                 /* Nahrat metadata na server */
+
+                char buffer[sizeof(struct metadata) + 1];
+                /* Request */
+                
+                buffer[0] = (enum request)NEW_METADATA;
+                strcpy(buffer + 1, &new_metadata);
+
+                if (write(socketListen, buffer, sizeof(buffer)) < 0)
+                {
+                    perror("Chyba pri zapisovani do fd");
+                    exit(-3);
+                }
 
                 break;
 

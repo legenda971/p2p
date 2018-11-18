@@ -1,17 +1,21 @@
-#include <stdio.h>      /* printf() */
-#include <stdlib.h>     /* exit(), malloc(), free() */
+#include <stdio.h>  /* printf() */
+#include <stdlib.h> /* exit(), malloc(), free() */
 #include <sys/socket.h>
-#include <sys/types.h>  /* key_t, sem_t, pid_t */
+#include <sys/types.h> /* key_t, sem_t, pid_t */
 #include <netdb.h>
 #include <unistd.h>
 #include <semaphore.h>
-#include <fcntl.h>      /* O_CREAT */
+#include <fcntl.h>  /* O_CREAT */
+#include <string.h> /* strcpy */
 
-#define DEFAULT_LISTEN_PORT 56300
+#include "define/request_respons/database.h"
+#include "define/metadata.h"
+
+#define DEFAULT_LISTEN_PORT 56321
 #define SEMAPHONE_NAME "mySemaphone"
 
 void closeSocket(int Socket);
-void afterFork();
+void newMetadata(int read_socket, int write_pipe, sem_t *semaphore);
 
 int main(int argc, char **argv)
 {
@@ -22,7 +26,6 @@ int main(int argc, char **argv)
     int pipe_fdd[2];
     pipe(pipe_fdd);
 
-    int test = 50;
     /* DB */
     switch (fork())
     {
@@ -158,8 +161,22 @@ int main(int argc, char **argv)
 
         case 0:
             closeSocket(socketListen);
-            while(1){
+            char request_form_client;
+            while (1)
+            {
+                if ((read(socketClient, &request_form_client, sizeof(request_form_client))) < 0)
+                {
 
+                    perror("Chyba pri citani zo Socketu");
+                    exit(-2);
+                }
+
+                switch ((enum request)request_form_client)
+                {
+                case NEW_METADATA:
+                    newMetadata(socketClient, write_fd, mutex);
+                    break;
+                }
             }
             exit(0);
 
@@ -167,10 +184,10 @@ int main(int argc, char **argv)
             closeSocket(socketClient);
         }
 
+    }
         printf("Server sa vypina.\n");
 
-        return 0;
-    }
+        exit(0);
 }
 
 void closeSocket(int Socket)
@@ -182,4 +199,31 @@ void closeSocket(int Socket)
     }
 
     return;
+}
+
+void newMetadata(int read_socket, int write_pipe, sem_t *semaphore)
+{
+    struct metadata new_metadata;
+    if (read(read_socket, &new_metadata, sizeof(struct metadata)) < 0)
+    {
+        perror("Chyba pri citani zo socketu");
+        exit(-2);
+    }
+
+    sem_wait(semaphore);
+    printf("Server - Vstupujem do kritickej casti\n");
+
+    char buffer[sizeof(struct metadata) + 1];
+    /* Request */
+    buffer[0] = (enum request)NEW_METADATA;
+    strcpy(buffer + 1, &new_metadata);
+
+    if (write(write_pipe, buffer, sizeof(buffer)) < 0)
+    {
+        perror("Chyba pri zapisovani do fd");
+        exit(-3);
+    }
+
+    sem_post(semaphore);
+    printf("Server - Vystupujem z kritickej casti\n");
 }

@@ -27,17 +27,17 @@ int main(int argc, char **argv)
     sscanf(argv[0], "%d", &read_fd);
     sscanf(argv[1], "%d", &write_fd);
 
-    char request;
+    char request = 1;
     while (1)
     {
 
-        if (read(read_fd, &request, sizeof(request)) < 0)
+        if (read(read_fd, &request, sizeof(request)) <= 0)
         {
             perror("DB - chyba pri nacitani z fd");
             exit(-1);
         }
 
-        printf("Database - Request : %d\n", request);
+        printf("Database %d - Request : %d\n", getpid(), request);
 
         struct peer new_peer;
         struct metadata new_metadata;
@@ -76,6 +76,9 @@ int main(int argc, char **argv)
             {
                 meta_data = new_metadata;
                 is_metadata = 1;
+                
+
+                printf("Database - Nove metadata ! :\nMeno :%s\n Velkost Suboru: %d\n Velkost Bloku: %d\n", new_metadata.name, new_metadata.file_size, new_metadata.size_block);
             }
 
             break;
