@@ -7,15 +7,19 @@
 #include <semaphore.h>
 #include <fcntl.h>  /* O_CREAT */
 #include <string.h> /* strcpy */
+#include <limits.h> /* SCHAR_MAX */
+#include <time.h>   /* time */
 
 #include "define/request_respons/database.h"
 #include "define/metadata.h"
+#include "define/peer.h"
 
-#define DEFAULT_LISTEN_PORT 56321
-#define SEMAPHONE_NAME "mySemaphone"
+#define DEFAULT_LISTEN_PORT 56320
 
 void closeSocket(int Socket);
 void newMetadata(int read_socket, int write_pipe, sem_t *semaphore);
+void newPeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres);
+void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres);
 
 int main(int argc, char **argv)
 {
@@ -56,7 +60,14 @@ int main(int argc, char **argv)
     /* Shared semaphore TEST */
 
     sem_t *mutex;
-    if ((mutex = sem_open(SEMAPHONE_NAME, O_CREAT | O_EXCL, 0644, 1)) == SEM_FAILED)
+    /* Generovanie random mena pre semafor */
+    char name_semaphone[10];
+    srand((unsigned)time(NULL));
+    for (int i = 0; i < sizeof(name_semaphone); i++)
+        name_semaphone[i] = rand() % SCHAR_MAX;
+    name_semaphone[9] = 0;
+
+    if ((mutex = sem_open(name_semaphone, O_CREAT | O_EXCL, 0644, 1)) == SEM_FAILED)
     {
         perror("Chyba pri vytvarani semaphoru :");
         exit(1);
@@ -164,10 +175,10 @@ int main(int argc, char **argv)
             char request_form_client;
             while (1)
             {
-                if ((read(socketClient, &request_form_client, sizeof(request_form_client))) < 0)
+                if ((read(socketClient, &request_form_client, sizeof(request_form_client))) <= 0)
                 {
-
                     perror("Chyba pri citani zo Socketu");
+                    deletePeer(write_fd, mutex, &addressClient);
                     exit(-2);
                 }
 
@@ -175,6 +186,7 @@ int main(int argc, char **argv)
                 {
                 case NEW_METADATA:
                     newMetadata(socketClient, write_fd, mutex);
+                    newPeer(write_fd, mutex, &addressClient);
                     break;
                 }
             }
@@ -183,11 +195,10 @@ int main(int argc, char **argv)
         default:
             closeSocket(socketClient);
         }
-
     }
-        printf("Server sa vypina.\n");
+    printf("Server sa vypina.\n");
 
-        exit(0);
+    exit(0);
 }
 
 void closeSocket(int Socket)
@@ -212,15 +223,70 @@ void newMetadata(int read_socket, int write_pipe, sem_t *semaphore)
 
     sem_wait(semaphore);
     printf("Server - Vstupujem do kritickej casti\n");
+    printf("NEW METADATA\n");
+
+    //printf("Server - Nove metadata ! :\nMeno :%s\nVelkost Suboru: %d\nVelkost Bloku: %d\n", new_metadata.name, new_metadata.file_size, new_metadata.size_block);
 
     char buffer[sizeof(struct metadata) + 1];
     /* Request */
     buffer[0] = (enum request)NEW_METADATA;
-    strcpy(buffer + 1, &new_metadata);
+    //strcpy(buffer + 1, &new_metadata);
+    memcpy(buffer + 1, &new_metadata, sizeof(struct metadata));
 
     if (write(write_pipe, buffer, sizeof(buffer)) < 0)
     {
         perror("Chyba pri zapisovani do fd");
+        exit(-3);
+    }
+
+    sem_post(semaphore);
+    printf("Server - Vystupujem z kritickej casti\n");
+}
+
+void newPeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres)
+{
+    sem_wait(semaphore);
+    printf("Server - Vstupujem do kritickej casti\n");
+    printf("NEW PEER\n");
+    struct peer new_peer;
+
+    memcpy(new_peer.ip, &(addres->sin_addr.s_addr), sizeof(new_peer.ip));
+    new_peer.port = addres->sin_port;
+
+    char buffer[sizeof(struct peer) + 1];
+
+    buffer[0] = (enum request)NEW_PEER;
+    memcpy(buffer + 1, &new_peer, sizeof(struct peer));
+
+    if (write(write_pipe, buffer, sizeof(buffer)) < 0)
+    {
+        perror("2. Chyba pri zapisovani do fd");
+        exit(-3);
+    }
+
+    sem_post(semaphore);
+    printf("Server - Vystupujem z kritickej casti\n");
+}
+
+void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres)
+{
+    sem_wait(semaphore);
+    printf("Server - Vstupujem do kritickej casti\n");
+    printf("NEW PEER\n");
+
+    struct peer new_peer;
+
+    memcpy(new_peer.ip, &(addres->sin_addr.s_addr), sizeof(new_peer.ip));
+    new_peer.port = addres->sin_port;
+
+    char buffer[sizeof(struct peer) + 1];
+
+    buffer[0] = (enum request)DELETE_PEER;
+    memcpy(buffer + 1, &new_peer, sizeof(struct peer));
+
+    if (write(write_pipe, buffer, sizeof(buffer)) < 0)
+    {
+        perror("2. Chyba pri zapisovani do fd");
         exit(-3);
     }
 

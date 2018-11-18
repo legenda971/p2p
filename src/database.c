@@ -13,7 +13,6 @@ argv[2] - write fd
 
 */
 
-
 #define MAX_PEERLIST 10
 
 int main(int argc, char **argv)
@@ -37,11 +36,12 @@ int main(int argc, char **argv)
             exit(-1);
         }
 
-        printf("Database %d - Request : %d\n", getpid(), request);
+        printf("--------------------------------\n");
+        printf("Database - Request : %d\n", request);
 
         struct peer new_peer;
         struct metadata new_metadata;
-        
+
         switch (request)
         {
         case NEW_PEER:
@@ -56,16 +56,42 @@ int main(int argc, char **argv)
 
             size_peer_list++;
 
+            printf("Database - Novy peer,%d.%d.%d.%d:%d\n", new_peer.ip[0], new_peer.ip[1], new_peer.ip[2], new_peer.ip[3], new_peer.port);
+            printf("Database - Pocet novych peerov je %d\n", size_peer_list);
+            
             break;
 
         case DELETE_PEER:
 
-            /* I WAS HERE */
+            if (read(read_fd, &new_peer, sizeof(struct peer)) < 0)
+            {
+                perror("DB - chyba pri nacitani z fd");
+                exit(-1);
+            }
+
+            for (int i = 0; i < size_peer_list; i++)
+            {
+                if (!memcmp(&new_peer, peer_list + (sizeof(struct peer) * i), sizeof(struct peer)))
+                {
+                    while (i != (size_peer_list - 1))
+                    {
+                        memcpy(peer_list + (sizeof(struct peer) * i), peer_list + (sizeof(struct peer) * i) + 1, sizeof(struct peer));
+                    }
+                    size_peer_list--;
+
+                    printf("Database - Pocet novych peerov je %d\n", size_peer_list);
+                    break;
+                }
+
+                if(i == size_peer_list-1)
+                    printf("Database - Peer %d.%d.%d.%d:%d sa nenasiel\n", new_peer.ip[0], new_peer.ip[1], new_peer.ip[2], new_peer.ip[3], new_peer.port);
+            }
+
 
             break;
 
         case NEW_METADATA:
-            
+
             if (read(read_fd, &new_metadata, sizeof(struct metadata)) < 0)
             {
                 perror("DB - chyba pri nacitani z fd");
@@ -76,9 +102,9 @@ int main(int argc, char **argv)
             {
                 meta_data = new_metadata;
                 is_metadata = 1;
-                
 
-                printf("Database - Nove metadata ! :\nMeno :%s\n Velkost Suboru: %d\n Velkost Bloku: %d\n", new_metadata.name, new_metadata.file_size, new_metadata.size_block);
+                printf("Database - Nove metadata ! :\nMeno :%s\nVelkost Suboru: %d\nVelkost Bloku: %d\n",
+                       new_metadata.name, new_metadata.file_size, new_metadata.size_block);
             }
 
             break;

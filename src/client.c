@@ -12,7 +12,9 @@
 #include "define/metadata.h"
 #include "define/request_respons/database.h"
 
-#define PORT 56321
+#define PORT 56320
+
+void zoznamPeerov();
 
 int main(int argc, char **argv)
 {
@@ -54,7 +56,7 @@ int main(int argc, char **argv)
     int y_middle = y_max / 2;
     int x_middle = x_max / 2;
 
-    const char *menu[] = {"Nahrat subor", "Stiahnut Subor", "Nastavenia", "Koniec"};
+    const char *menu[] = {"Nahrat subor", "Stiahnut Subor", "Zoznam Peerov", "Koniec"};
     int size_menu = sizeof(menu) / sizeof(menu[0]);
 
     int akcia;
@@ -101,12 +103,6 @@ int main(int argc, char **argv)
 
                 char name_dir[50];
                 memset(name_dir, 0, sizeof(name_dir));
-                /*do{
-                        mvwprintw(menuwin, y_middle , x_middle - (int)(strlen(name_dir) / 2), "%s", name_dir);
-                        wrefresh(menuwin);
-                    }while((name_dir[strlen(name_dir)] = wgetch(menuwin)) != 10);
-
-                    name_dir[strlen(name_dir) - 1] = 0;*/
 
                 while (akcia = wgetch(menuwin))
                 {
@@ -126,6 +122,7 @@ int main(int argc, char **argv)
                     wrefresh(menuwin);
                 }
 
+                /*
                 int file_fd;
                 if ((file_fd = open(name_dir, O_RDONLY)) < 0)
                 {
@@ -134,7 +131,7 @@ int main(int argc, char **argv)
                     wattroff(menuwin, A_REVERSE);
                     while (wgetch(menuwin) != 10)
                         ;
-                }
+                }*/
 
                 struct stat file_stat;
                 if (stat(name_dir, &file_stat) == -1)
@@ -142,14 +139,15 @@ int main(int argc, char **argv)
                     wattron(menuwin, A_REVERSE);
                     mvwprintw(menuwin, y_middle + 1, x_middle - (int)(66 / 2), "2. ERROR - Subor sa neda otvorit. Stlacte ENTER pre navrat do menu .");
                     wattroff(menuwin, A_REVERSE);
-                    while (wgetch(menuwin) != 10)
-                        ;
+                    while (wgetch(menuwin) != 10);
                 }
 
                 int velkost_bloku = 1;
 
                 wclear(menuwin);
 
+
+                /* Vyber velkosti bloku */
                 akcia = 0;
                 do
                 {
@@ -199,7 +197,8 @@ int main(int argc, char **argv)
                 /* Request */
                 
                 buffer[0] = (enum request)NEW_METADATA;
-                strcpy(buffer + 1, &new_metadata);
+                //strcpy(buffer + 1, &new_metadata);
+                memcpy(buffer + 1, &new_metadata, sizeof(struct metadata));
 
                 if (write(socketListen, buffer, sizeof(buffer)) < 0)
                 {
@@ -208,6 +207,10 @@ int main(int argc, char **argv)
                 }
 
                 break;
+
+            case 3:
+                 zoznamPeerov();
+                 break;
 
             case 4:
                 exit(0);
@@ -222,3 +225,5 @@ int main(int argc, char **argv)
     endwin();
     exit(1);
 }
+
+void zoznamPeerov(){}
