@@ -11,10 +11,12 @@
 
 #include "define/metadata.h"
 #include "define/request_respons/database.h"
+#include "define/peer.h"
 
-#define PORT 56320
+#define PORT 5320
 
-void zoznamPeerov();
+void zoznamPeerov(WINDOW *window, int socket_fd, int y_middle, int x_middle);
+void downloadMetadata(WINDOW *window, int socket_fd, int y_middle, int x_middle);
 
 int main(int argc, char **argv)
 {
@@ -28,6 +30,8 @@ int main(int argc, char **argv)
     }
 
     struct sockaddr_in adresa;
+    bzero((char *)&adresa, sizeof(struct sockaddr_in));
+
     adresa.sin_family = AF_INET;
     adresa.sin_port = htons(PORT);
     adresa.sin_addr.s_addr = inet_addr("127.0.0.1");
@@ -139,13 +143,13 @@ int main(int argc, char **argv)
                     wattron(menuwin, A_REVERSE);
                     mvwprintw(menuwin, y_middle + 1, x_middle - (int)(66 / 2), "2. ERROR - Subor sa neda otvorit. Stlacte ENTER pre navrat do menu .");
                     wattroff(menuwin, A_REVERSE);
-                    while (wgetch(menuwin) != 10);
+                    while (wgetch(menuwin) != 10)
+                        ;
                 }
 
                 int velkost_bloku = 1;
 
                 wclear(menuwin);
-
 
                 /* Vyber velkosti bloku */
                 akcia = 0;
@@ -190,12 +194,13 @@ int main(int argc, char **argv)
                 new_metadata.file_size = file_stat.st_size;
                 strncpy(new_metadata.name, name_dir, sizeof(new_metadata.name));
 
-                while ((akcia = wgetch(menuwin)) != 10);
+                while ((akcia = wgetch(menuwin)) != 10)
+                    ;
                 /* Nahrat metadata na server */
 
                 char buffer[sizeof(struct metadata) + 1];
                 /* Request */
-                
+
                 buffer[0] = (enum request)NEW_METADATA;
                 //strcpy(buffer + 1, &new_metadata);
                 memcpy(buffer + 1, &new_metadata, sizeof(struct metadata));
@@ -207,12 +212,16 @@ int main(int argc, char **argv)
                 }
 
                 break;
+            case 1:
+                downloadMetadata(menuwin, socketListen, y_middle, x_middle);
+                break;
+
+            case 2:
+                zoznamPeerov(menuwin, socketListen, y_middle, x_middle);
+                break;
 
             case 3:
-                 zoznamPeerov();
-                 break;
-
-            case 4:
+                endwin();
                 exit(0);
             default:
                 break;
@@ -226,4 +235,65 @@ int main(int argc, char **argv)
     exit(1);
 }
 
-void zoznamPeerov(){}
+void write_to_fd(int fd, void *buffer, size_t size)
+{
+    if (write(fd, buffer, size) < 0)
+    {
+        perror("Chyba pri zapise do fd :");
+        exit(-1);
+    }
+}
+
+void read_from_fd(int fd, void *buffer, size_t size)
+{
+    if (read(fd, buffer, size) < size)
+    {
+        perror("Chyba pri citani z fd :");
+        exit(-2);
+    }
+}
+
+void zoznamPeerov(WINDOW *window, int socket_fd, int y_middle, int x_middle)
+{
+    wclear(window);
+    box(window, 0, 0);
+
+    char request = (enum request)PEER_LIST;
+
+    write_to_fd(socket_fd, &request, sizeof(request));
+
+    int size_peer;
+    read_from_fd(socket_fd, &size_peer, sizeof(size_peer));
+
+    char *buffer = (char *)malloc(sizeof(struct peer) * size_peer);
+
+    read_from_fd(socket_fd, buffer, sizeof(struct peer) * size_peer);
+
+    for (int i = 0; i < size_peer; i++)
+    {
+        struct peer *temp = buffer + (sizeof(struct peer) * i);
+        mvwprintw(window, y_middle - (int)(size_peer / 2) + i, x_middle - 10, "%d.%d.%d.%d:%d", temp->ip[0], temp->ip[1], temp->ip[2], temp->ip[3], temp->port);
+    }
+
+    while ((wgetch(window)) != 10)
+        ;
+}
+
+void downloadMetadata(WINDOW *window, int socket_fd, int y_middle, int x_middle)
+{
+    wclear(window);
+    box(window, 0, 0);
+
+    char request = (enum request)METADATA;
+    write_to_fd(socket_fd, &request, sizeof(request));
+
+    struct metadata new_metadata;
+    read_from_fd(socket_fd, &new_metadata, sizeof(struct metadata));
+
+    mvwprintw(window, y_middle - 2, x_middle - 10, "Meno suboru\t: %s", new_metadata.name);
+    mvwprintw(window, y_middle - 1, x_middle - 10, "Velkost suboru\t: %d", new_metadata.file_size);
+    mvwprintw(window, y_middle, x_middle - 10, "Velkost bloku\t: %d", new_metadata.size_block);
+
+    while ((wgetch(window)) != 10)
+        ;
+}

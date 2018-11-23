@@ -41,6 +41,7 @@ int main(int argc, char **argv)
 
         struct peer new_peer;
         struct metadata new_metadata;
+        char *buffer;
 
         switch (request)
         {
@@ -58,7 +59,7 @@ int main(int argc, char **argv)
 
             printf("Database - Novy peer,%d.%d.%d.%d:%d\n", new_peer.ip[0], new_peer.ip[1], new_peer.ip[2], new_peer.ip[3], new_peer.port);
             printf("Database - Pocet novych peerov je %d\n", size_peer_list);
-            
+
             break;
 
         case DELETE_PEER:
@@ -83,10 +84,9 @@ int main(int argc, char **argv)
                     break;
                 }
 
-                if(i == size_peer_list-1)
+                if (i == size_peer_list - 1)
                     printf("Database - Peer %d.%d.%d.%d:%d sa nenasiel\n", new_peer.ip[0], new_peer.ip[1], new_peer.ip[2], new_peer.ip[3], new_peer.port);
             }
-
 
             break;
 
@@ -106,6 +106,8 @@ int main(int argc, char **argv)
                 printf("Database - Nove metadata ! :\nMeno :%s\nVelkost Suboru: %d\nVelkost Bloku: %d\n",
                        new_metadata.name, new_metadata.file_size, new_metadata.size_block);
             }
+            else
+                printf("Database - Uz existuju metadata !\n");
 
             break;
 
@@ -127,21 +129,19 @@ int main(int argc, char **argv)
             break;
 
         case PEER_LIST:
-            if (write(write_fd, &size_peer_list, sizeof(size_peer_list)) < 0)
+#define SIZEOF_RESPONSE_PEERLIST sizeof(struct peer) * size_peer_list + sizeof(size_peer_list)
+            buffer = (char *)malloc(sizeof(struct peer) * size_peer_list + sizeof(size_peer_list));
+            *((int *)buffer) = size_peer_list;
+            memcpy(buffer + sizeof(int), peer_list, sizeof(struct peer) * size_peer_list);
+
+            if (write(write_fd, buffer, sizeof(struct peer) * size_peer_list + sizeof(size_peer_list)) < 0)
             {
                 perror("DB - chyba pri nacitani z fd");
                 exit(-1);
             }
 
-            for (int i = 0; i < size_peer_list; i++)
-            {
-                if (write(write_fd, peer_list + i, sizeof(struct peer)) < 0)
-                {
-                    perror("DB - chyba pri nacitani z fd");
-                    exit(-1);
-                }
-            }
-
+            printf("Database - Odosielam udaje.\n");
+#undef SIZEOF_RESPONSE_PEERLIST
             break;
 
         case METADATA:
