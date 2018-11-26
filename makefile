@@ -1,17 +1,16 @@
-all: server.o client.o database.o
+all:
 	gcc -o server src/server.c -lpthread -g
 	gcc -o database src/database.c -g
 	gcc -o client src/client.c -lncurses -lm -g
-	make clean
 
-server.o: database.o
+server:
 	gcc -o server.o src/server.c -lpthread
 
-database.o:
+database:
 	gcc -o database.o src/database.c
 
-client.o:
-	gcc -o client.o src/client.c -lncurses
+client:
+	gcc -o client src/client.c -lncurses -lm -g
 
 clean:
 	rm *.o

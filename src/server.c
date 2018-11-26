@@ -9,16 +9,18 @@
 #include <string.h> /* strcpy */
 #include <limits.h> /* SCHAR_MAX */
 #include <time.h>   /* time */
+#include <signal.h>
 
 #include "define/request_respons/database.h"
 #include "define/metadata.h"
 #include "define/peer.h"
 
 #define DEFAULT_LISTEN_PORT 5320
+#define SEMAPHORE_NAME "MySemapnore3"
 
 void closeSocket(int Socket);
 void newMetadata(int read_socket, int write_pipe, sem_t *semaphore);
-void newPeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres);
+void newPeer(int read_socket, int write_pipe, sem_t *semaphore, struct sockaddr_in *addres, unsigned short * port);
 void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres);
 void socketAdressToPeer(struct peer *temp, struct sockaddr_in *address);
 void downloadPeerList(int write_pipe, int read_pipe, sem_t *semaphore, int socket_fd);
@@ -28,8 +30,12 @@ void readFd(int fd, void *buffer, size_t size_buffer);
 void deleteMetadata(int write_pipe, sem_t *semaphore);
 char existMetadata(int write_pipe, int read_pipe, sem_t *semaphore, int socket_fd);
 
+void sigintSignalFunction();
+
 int main(int argc, char **argv)
 {
+
+    signal(SIGINT, sigintSignalFunction);
 
     int pipe_fd[2];
     pipe(pipe_fd);
@@ -68,7 +74,7 @@ int main(int argc, char **argv)
 
     sem_t *mutex;
     /* Generovanie random mena pre semafor */
-    
+
     char name_semaphone[10];
     /*
     int qwe = sizeof(name_semaphone);
@@ -77,11 +83,7 @@ int main(int argc, char **argv)
         name_semaphone[i] = (rand() % ('z' - 'a')) + 'a';
     name_semaphone[9] = 0;*/
 
-    if ((mutex = sem_open( "Kappa12345", O_CREAT | O_EXCL, 0644, 1)) == SEM_FAILED)
-    {
-        perror("Server - Chyba pri vytvarani semaphoru :");
-        exit(1);
-    }
+    //sem_unlink(SEMAPHORE_NAME);
 
     /* Vytvorenie socketu */
     int socketListen;
@@ -115,10 +117,17 @@ int main(int argc, char **argv)
 
     printf("server - Socket bol uspesne vytoreny a nastavený.\n");
 
+    if ((mutex = sem_open( SEMAPHORE_NAME, O_CREAT | O_EXCL, 0644, 1)) == SEM_FAILED)
+    {
+        perror("Server - Chyba pri vytvarani semaphoru :");
+        exit(1);
+    }
+
     /* Vytvorenie spojeni s clientami */
     int socketClient;
     struct sockaddr_in addressClient;
     socklen_t size;
+
     while (1)
     {
         bzero((char *)&addressClient, sizeof(struct sockaddr_in));
@@ -140,6 +149,7 @@ int main(int argc, char **argv)
         case 0:
             closeSocket(socketListen);
             char request_form_client;
+            unsigned short port = 0;
             while (1)
             {
                 if ((read(socketClient, &request_form_client, sizeof(request_form_client))) <= 0)
@@ -153,7 +163,6 @@ int main(int argc, char **argv)
                 {
                 case NEW_METADATA:
                     newMetadata(socketClient, write_fd, mutex);
-                    newPeer(write_fd, mutex, &addressClient);
                     break;
 
                 case METADATA:
@@ -162,6 +171,10 @@ int main(int argc, char **argv)
 
                 case PEER_LIST:
                     downloadPeerList(write_fd, read_fd, mutex, socketClient);
+                    break;
+
+                case NEW_PEER:
+                    newPeer(socketClient, write_fd, mutex, &addressClient, &port);
                     break;
                 }
             }
@@ -220,26 +233,21 @@ void newMetadata(int read_socket, int write_pipe, sem_t *semaphore)
     printf("Server - Vystupujem z kritickej casti\n");
 }
 
-void newPeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres)
+void newPeer( int read_socket, int write_pipe, sem_t *semaphore, struct sockaddr_in * addres, unsigned short * port)
 {
     sem_wait(semaphore);
     printf("Server - Vstupujem do kritickej casti\n");
     printf("Server - NEW PEER\n");
 
-    /*struct peer new_peer;
-
-    memcpy(new_peer.ip, &(addres->sin_addr.s_addr), sizeof(new_peer.ip));
-    new_peer.port = addres->sin_port;
-    */
-
     char buffer[sizeof(struct peer) + 1];
     buffer[0] = (enum request)NEW_PEER;
     socketAdressToPeer((struct peer *)(buffer + 1), addres);
 
-    /*
-    memcpy(((struct peer *)buffer + 1)->ip, &(addres->sin_addr.s_addr), sizeof(addres->sin_addr.s_addr));
-    ((struct peer *)buffer + 1)->port = addres->sin_port;
-    */
+    readFd(read_socket, port, sizeof(unsigned short));
+
+    ((struct peer *)(buffer +1))->port = *port;
+
+    printf("Server - port je  : %d", *port);
 
     if (write(write_pipe, buffer, sizeof(buffer)) < 0)
     {
@@ -256,17 +264,6 @@ void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres)
     sem_wait(semaphore);
     printf("Server - Vstupujem do kritickej casti\n");
     printf("Sercer - DELETE PEER\n");
-
-    /*
-    struct peer new_peer;
-
-    memcpy(new_peer.ip, &(addres->sin_addr.s_addr), sizeof(new_peer.ip));
-    new_peer.port = addres->sin_port;
-    char buffer[sizeof(struct peer) + 1];
-
-    buffer[0] = (enum request)DELETE_PEER;
-    memcpy(buffer + 1, &new_peer, sizeof(struct peer));
-    */
 
     char buffer[sizeof(struct peer) + 1];
     buffer[0] = (enum request)DELETE_PEER;
@@ -296,7 +293,7 @@ void downloadPeerList(int write_pipe, int read_pipe, sem_t *semaphore, int socke
 
     char request = (enum request)PEER_LIST;
     printf("Sizeof(enum request) = %d", sizeof(enum request));
-    
+
     if (write(write_pipe, &request, 1) < 0)
     {
         perror("Server - Chyba pri zapisovani do fd");
@@ -304,7 +301,7 @@ void downloadPeerList(int write_pipe, int read_pipe, sem_t *semaphore, int socke
     }
 
     int size_peerlist;
-    
+
     if (read(read_pipe, &size_peerlist, sizeof(size_peerlist)) < 0)
     {
         perror("Server - Chyba pri citani z fd");
@@ -395,4 +392,11 @@ char existMetadata(int write_pipe, int read_pipe, sem_t *semaphore, int socket_f
     writeFd(socket_fd, &temp, sizeof(temp));
 
     return temp;
+}
+
+void sigintSignalFunction(){
+    printf("Server - bezpecne vypnutie\n");
+    sem_close(SEMAPHORE_NAME);
+    sem_unlink(SEMAPHORE_NAME);
+    exit(0);
 }
