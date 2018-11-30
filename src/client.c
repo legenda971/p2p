@@ -27,15 +27,24 @@ void zoznamPeerov(WINDOW *window, int socket_fd, int y_middle, int x_middle);
 void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle);
 void downloadMetadata(WINDOW *window, int socket_fd, int y_middle, int x_middle);
 void downloadedFile(WINDOW *window, int socked_fd, int y_middle, int x_middle);
-//void thread_downloaingFile(int server_fd, struct metadata *metadata, FILE *file);
 void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_buffer, char *bitmap_buffer);
 void sendBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block, int file_size);
-void saveBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block, int file_size);
+void saveBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block, int file_size, char *bitmap_buffer);
 char isFull(char *bitmap, int size_bitmap, int number_of_block);
-struct client *deleteClient(struct client *begin_client_list, int client_order);
-void connectToSeeder(struct client *begin_client_list, int size_peer_list, struct peer *peer_list);
-void newClientToList(struct client *client_list, struct client *new_client);
+struct client *newClientToList(struct client *client_list, struct client *new_client); // return poiter to begin list
+struct client *deleteClient(struct client *begin_client_list, struct client *delete_client);
 void initMasterFD(int *master_fd, int fd_server);
+struct client *connectToSeeder(struct client *begin_client_list, int size_peer_list, struct peer *peer_list);
+
+int numberOfBlock(int size_file, int size_block);
+int sizeBitmap(int number_of_block);
+
+void statsRequest(int socket_fd, int my_stats);
+void bitmapRequest(int socket_fd, char *bitmap_buffer, int size_bitmap);
+
+char blockInBitmap(char *bitmap_buffer, int order_of_block);
+void blockToBitmap(char *bitmap_buffer, int order_of_block);
+void printBitmap(char *bitmap_buffer, int size_bitmap);
 
 typedef struct downloadingFile
 {
@@ -247,8 +256,8 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
     char my_stat = 0;
 
     /* BIT MAP */
-    int number_of_block = (metadata->file_size + (metadata->size_block - (metadata->file_size % metadata->size_block))) / metadata->size_block;
-    int size_bitmap = (number_of_block + (8 - (number_of_block % 8))) / 8;
+    int number_of_block = numberOfBlock(metadata->file_size, metadata->size_block);
+    int size_bitmap = sizeBitmap(number_of_block);
 
     /* Zoznam peerov */
     char request = (enum request)PEER_LIST;
@@ -261,7 +270,7 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
     read_from_fd(server_fd, peer_list, sizeof(struct peer) * size_peer_list);
 
     /* Pripajanie sa na seederov */
-    connectToSeeder(begin_client_list, size_peer_list, peer_list);
+    begin_client_list = connectToSeeder(begin_client_list, size_peer_list, peer_list);
 
     /* Init Master Socket */
     if ((master_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -270,7 +279,6 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
         exit(-1);
     }
 
-    
     int opt = 1;
     if (setsockopt(master_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
     {
@@ -294,7 +302,7 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
         addressMaster.sin_port = htons(random_port);
         int error = bind(master_fd, (struct sockaddr *)&addressMaster, sizeof(addressMaster));
 
-        if(error < 0)
+        if (error < 0)
             continue;
         else
             break;
@@ -314,17 +322,22 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
         exit(-3);
     }
 
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+
     /* SET MASTER STAT */
-    if (!(isFull(bitmap_buffer, size_bitmap, number_of_block)))
+    if (!isFull(bitmap_buffer, size_bitmap, number_of_block))
     {
         my_stat = (enum CLIENT)DOWNLOADING;
-        printf("Stahujme\n");
+        printf("KAPPA - Stahujme\n");
     }
     else
     {
         my_stat = (enum CLIENT)DOWNLOADED;
-        printf("Stiahnute !\n");
+        printf("KAPPA - Stiahnute !\n");
     }
+
     int max_fd;
     fd_set readfd, writefd;
     while (1)
@@ -333,23 +346,30 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
         FD_ZERO(&writefd);
 
         FD_SET(master_fd, &readfd);
-        //FD_SET(master_fd, &writefd);
+        FD_SET(master_fd, &writefd);
 
         max_fd = master_fd;
         struct client *temp = begin_client_list;
         while (temp != 0)
         {
             FD_SET(temp->fd_socket, &readfd);
-            //FD_SET(temp->fd_socket, &writefd);
-            if (temp->fd_socket > max_fd)
+            FD_SET(temp->fd_socket, &writefd);
+            if (temp->fd_socket > max_fd)        /*
+        if ((error > 0) && (error != EADDRINUSE))
+        {
+            perror("Bind Error");
+            exit(-5);
+        }
+        else
+            break;*/
                 max_fd = temp->fd_socket;
 
             temp = temp->next;
         }
 
-        printf("Cakam\n");
-        int activity = select(max_fd + 1, &readfd, &writefd, NULL, NULL);
-        printf("ZMENA !!!!");
+        sleep(1);
+        //printf("---------------------------------\n");
+        int activity = select(max_fd + 1, &readfd, &writefd, NULL, &tv);
 
         if (activity < 0)
         {
@@ -375,130 +395,153 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
 
             printf("Nové pripojenie\n");
 
-            if(begin_client_list = 0)
-                begin_client_list = new_client;
-            else
-                newClientToList(begin_client_list, new_client);
+            begin_client_list = newClientToList(begin_client_list, new_client);
         }
 
-        temp = begin_client_list;
-        int order = 0;
-        while (temp != 0)
+        /* Request from client */
+        for (struct client *temp = begin_client_list; temp != 0; temp = temp->next)
         {
             if (FD_ISSET(temp->fd_socket, &readfd))
             {
-                printf("Zmena na clientovi.\n");
-
-                int size_of_readed;
-                char buffer;
-                /* Odpojenie klientu */
-                if ((size_of_readed = read(temp->fd_socket, &buffer, sizeof(buffer))) < 1)
+                char request;
+                if (read(temp->fd_socket, &request, sizeof(request)) == 0)
                 {
-                    if (temp == 0)
-                        printf("Client sa odpojil\n");
-                    if (temp < 0)
-                        printf("Doslo k chybe\n");
+                    printf("Klient sa odpojil\n");
+                    temp = deleteClient(begin_client_list, temp);
+                    if (!temp)
+                        break;
+                    else
+                        continue;
+                }
 
-                    struct client *delete_client = temp;
-                    if (order = 0)
+                if (temp->request == 0)
+                    temp->request = request;
+            }
+            else
+                continue;
+
+            /* RESPONSE TO REQUEST FROM CLIENT */
+            if (FD_ISSET(temp->fd_socket, &writefd))
+            {
+                printf("Request from client : %d\n", temp->request);
+
+                switch ((enum CLIENT)temp->request)
+                {
+                case STATS_REQUEST:
+                    statsRequest(temp->fd_socket, my_stat);
+                    break;
+
+                case BITMAP_REQUEST:
+                    bitmapRequest(temp->fd_socket, bitmap_buffer, size_bitmap);
+                    break;
+
+                case STATS_RESPONSE:
+                    read_from_fd(temp->fd_socket, &temp->stat, sizeof(char));
+                    break;
+
+                case BITMAP_RESPONSE:
+                    temp->bitmap = (char *)malloc(size_bitmap);
+                    read_from_fd(temp->fd_socket, temp->bitmap, size_bitmap);
+                    printf("Response bitmap :");
+                    for (int i = 0; i < size_bitmap; i++)
+                        for (int o = 0; o < 8; o++)
+                            printf("%d", !!((temp->bitmap[i] << o) & 128));
+                    printf("\n");
+                    break;
+
+                case SEND_BLOCK_REQUEST:
+                    printf("SEND BLOCK REQUEST\n");
+                    sendBlock(temp->fd_socket, file_buffer, number_of_block, metadata->size_block, metadata->file_size);
+                    break;
+
+                case SEND_BLOCK_RESPONSE:
+                    printf("SEND BLOCK RESPONSE\n");
+                    saveBlock(temp->fd_socket, file_buffer, number_of_block, metadata->size_block, metadata->file_size, bitmap_buffer);
+
+                    printf("Moja nova bitmapa :\n");
+                    printBitmap(bitmap_buffer, size_bitmap);
+
+                    if (!isFull(bitmap_buffer, size_bitmap, number_of_block))
                     {
-                        begin_client_list = temp->next;
+                        my_stat = (enum CLIENT)DOWNLOADING;
+                        printf("KAPPA - Stahujme\n");
                     }
                     else
                     {
-                        for (int i = 0; i < order - 1; i++)
-                            temp = temp->next;
-
-                        temp->next = delete_client->next;
-                        free(delete_client);
+                        my_stat = (enum CLIENT)DOWNLOADED;
+                        printf("KAPPA - Stiahnute !\n");
+                        char *buffer = (char *)malloc(metadata->file_size + 1);
+                        memcpy(buffer, file_buffer, metadata->file_size);
+                        buffer[metadata->file_size] = 0;
+                        printf("%s\n", buffer);
                     }
+                    break;
 
-                    temp = temp->next;
-                    continue;
+                default:
+                    printf("Nedefinovaný request alebo response \n");
                 }
 
-                if (!temp->request)
-                    temp->request = buffer;
-            }
-
-            temp = temp->next;
-            order++;
-        }
-
-        if (FD_ISSET(temp->fd_socket, &writefd))
-        {
-            printf("Request : %d\n", temp->request);
-
-            /* RESPONSE TO CLIENT */
-            char *buffer;
-            switch ((enum CLIENT)temp->request)
-            {
-            case STATS_REQUEST:
-                buffer = (char *)malloc(sizeof(char) * 2);
-                buffer[0] = (enum CLIENT)STATS_RESPONSE;
-                buffer[1] = my_stat;
-                write_to_fd(temp->fd_socket, buffer, sizeof(char) * 2);
-                free(buffer);
-                break;
-
-            case BITMAP_REQUEST:
-                buffer = (char *)malloc(sizeof(char) + size_bitmap);
-                buffer[0] = (enum CLIENT)BITMAP_RESPONSE;
-                memcpy(buffer + 1, bitmap_buffer, size_bitmap);
-                write_to_fd(temp->fd_socket, buffer, sizeof(char) + size_bitmap);
-                free(buffer);
-                break;
-
-            case STATS_RESPONSE:
-                read_from_fd(temp->fd_socket, temp->stat, sizeof(char));
-                break;
-
-            case BITMAP_RESPONSE:
-                read_from_fd(temp->fd_socket, temp->bitmap, size_bitmap);
-                break;
-
-            case SEND_BLOCK_REQUEST:
-                sendBlock(temp->fd_socket, file_buffer, number_of_block, metadata->size_block, metadata->file_size);
-                break;
-
-            case SEND_BLOCK_RESPONSE:
-                saveBlock(temp->fd_socket, file_buffer, number_of_block, metadata->size_block, metadata->file_size);
-                break;
-
-            default:
-                printf("Nedefinovaný request\n");
+                temp->request = 0;
             }
         }
 
-        if(my_stat == (enum CLIENT)DOWNLOADED)
+        if (my_stat == (enum CLIENT)DOWNLOADED)
             continue;
 
-        /* REQUEST TO CLIENTS */
+        /* Request to client */
+        char *request_bitmap = (char *)malloc(size_bitmap);
+        bzero(request_bitmap, size_bitmap);
         for (struct client *temp = begin_client_list; temp != 0; temp = temp->next)
         {
             if (FD_ISSET(temp->fd_socket, &writefd))
             {
-                if (my_stat == (enum CLIENT)DOWNLOADING)
+                if (temp->stat == 0)
                 {
-                    if (temp->stat == 0)
-                    {
-                        char request = (enum CLIENT)STATS_REQUEST;
-                        write_to_fd(temp->fd_socket, &request, sizeof(request));
-                        continue;
-                    }
+                    char buffer = (enum CLIENT)STATS_REQUEST;
+                    write_to_fd(temp->fd_socket, &buffer, sizeof(buffer));
+                    continue;
+                }
 
-                    if (temp->bitmap == 0 && temp->stat == (enum CLIENT)DOWNLOADING)
-                    {
-                        char request = (enum CLIENT)BITMAP_REQUEST;
-                        write_to_fd(temp->fd_socket, &request, sizeof(request));
-                        continue;
-                    }
+                if (temp->bitmap == 0)
+                {
+                    char buffer = (enum CLIENT)BITMAP_REQUEST;
+                    write_to_fd(temp->fd_socket, &buffer, sizeof(buffer));
+                    continue;
+                }
 
-                    if (temp->stat == (enum CLIENT)DOWNLOADED)
+                /* Bitmap */
+                for (int i = 0; i < number_of_block; i++)
+                {
+                    int order_block;
+                    if (i < 8)
+                        order_block = 0;
+                    else
+                        order_block = (i - (i % 8)) / 8;
+
+                    char request_block = !blockInBitmap(request_bitmap, i);
+                    char my_block = !blockInBitmap(bitmap_buffer, i);
+                    char client_block = blockInBitmap(temp->bitmap, i);
+
+                    printf("R %d | M %d | C %d\n", request_block, my_block, client_block);
+
+                    if ((request_block && my_block) && client_block)
                     {
+                        //printf("Blok ok \n");
+                        char buffer[sizeof(char) + sizeof(int)];
+                        buffer[0] = (enum CLIENT)SEND_BLOCK_REQUEST;
+                        *((int *)(buffer + sizeof(char))) = i;
+
+                        printf("Request - blok : %d\n", i);
+                        write_to_fd(temp->fd_socket, &buffer, sizeof(buffer));
+
+                        blockToBitmap(request_bitmap, i);
+
+                        break;
                     }
                 }
             }
+            else
+                printf("FD nema pristup\n");
         }
     }
 }
@@ -522,12 +565,13 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
         /* BACKSPACE */
         if (akcia == 263)
         {
-            /* I WAS HERE */
+            name_dir[strlen(name_dir) - 1] = 0;
+            mvwprintw(window, y_middle, x_middle - (int)(strlen(name_dir) / 2), "          ");
         }
         else
             name_dir[strlen(name_dir)] = akcia;
 
-        mvwprintw(window, y_middle, x_middle - (int)(strlen(name_dir) / 2), "%s", name_dir);
+        mvwprintw(window, y_middle, x_middle - (int)(strlen(name_dir) / 2), " %s", name_dir);
         wrefresh(window);
     }
 
@@ -540,6 +584,8 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
         while (wgetch(window) != 10)
             ;
     }
+
+    FILE *file = fopen(name_dir, "rb");
 
     int velkost_bloku = 1;
     int pocet_blokov;
@@ -562,11 +608,7 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
             break;
         }
 
-        double temp = ((double)file_stat.st_size) / ((double)velkost_bloku);
-        if ((int)temp < temp)
-            pocet_blokov = (temp) + 1;
-        else
-            pocet_blokov = temp;
+        pocet_blokov = numberOfBlock(file_stat.st_size, velkost_bloku);
 
         wclear(window);
         box(window, 0, 0);
@@ -604,12 +646,35 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
         exit(-3);
     }
 
+    wclear(window);
     endwin();
 
-    char *file_buffer = (char *)malloc(new_metadata.file_size);
-    char *bitmap_buffer = (char *)malloc((pocet_blokov + (8 - (pocet_blokov % 8))) / 8);
+    int size_bitmap = sizeBitmap(pocet_blokov);
 
-    memset(bitmap_buffer, 1, (pocet_blokov + (8 - (pocet_blokov % 8))) / 8);
+    char *file_buffer = (char *)malloc(new_metadata.file_size);
+    char *bitmap_buffer = (char *)malloc(size_bitmap);
+
+    fread(file_buffer, new_metadata.file_size, 1, file);
+
+    /* Set bit map to 1 */
+
+    for (int i = 0; i < size_bitmap - 1; i++)
+    {
+        bitmap_buffer[i] = 1;
+        for (int o = 0; o < 7; o++)
+        {
+            bitmap_buffer[i] = bitmap_buffer[i] << 1;
+            bitmap_buffer[i]++;
+        }
+    }
+
+    /* Last Block */
+    bitmap_buffer[size_bitmap - 1] = 1;
+    for (int i = 0; i < ((pocet_blokov % 8) ? (pocet_blokov % 8) - 1 : 7); i++)
+    {
+        bitmap_buffer[size_bitmap - 1] = bitmap_buffer[size_bitmap - 1] << 1;
+        bitmap_buffer[size_bitmap - 1]++;
+    }
 
     thread_downloaingFile(fd_server, &new_metadata, file_buffer, bitmap_buffer);
 }
@@ -619,30 +684,28 @@ void sendBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block
     int order_of_block;
     read_from_fd(wr_fd, &order_of_block, sizeof(order_of_block));
 
+    printf("Posielam blok : %d\n", order_of_block);
+
     char *buffer = (char *)malloc(size_block + sizeof(char) + sizeof(int));
 
     buffer[0] = (enum CLIENT)SEND_BLOCK_RESPONSE;
-    *((int *)(buffer + 1)) = order_of_block;
+    *((int *)(buffer + sizeof(char))) = order_of_block;
 
-    char *buffer_block = buffer[sizeof(char) + sizeof(int) - 1];
-
-    if (order_of_block != (number_of_block - 1))
+    if (order_of_block != (number_of_block - 1) || !(file_size % size_block))
     {
-        for (int i = 0; i < size_block; i++)
-            buffer_block[i] = buffer_file[(size_block * order_of_block) + i];
+        memcpy((buffer + sizeof(int) + sizeof(char)), buffer_file + (size_block * order_of_block), size_block);
     }
     else
     {
-        for (int i = 0; i < file_size % size_block; i++)
-            buffer_block[i] = buffer_file[(size_block * order_of_block) + i];
+        memcpy((buffer + sizeof(int) + sizeof(char)), buffer_file + (size_block * order_of_block), size_block - (file_size % size_block));
     }
 
-    write_to_fd(wr_fd, buffer_block, size_block);
+    write_to_fd(wr_fd, buffer, size_block + sizeof(char) + sizeof(int));
 
     free(buffer);
 }
 
-void saveBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block, int file_size)
+void saveBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block, int file_size, char *bitmap_buffer)
 {
     int order_of_block;
     read_from_fd(wr_fd, &order_of_block, sizeof(order_of_block));
@@ -651,26 +714,32 @@ void saveBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block
 
     read_from_fd(wr_fd, buffer_block, size_block);
 
-    if (order_of_block != (number_of_block - 1))
+    printf("Order block is : %d\n", order_of_block);
+
+    if (!blockInBitmap(bitmap_buffer, order_of_block))
     {
-        for (int i = 0; i < size_block; i++)
-            buffer_file[(size_block * order_of_block) + i] = buffer_block[i];
+        printf("Blok este nemam !\n");
+        if (order_of_block != (number_of_block - 1) || !(file_size % size_block))
+            memcpy(buffer_file + (size_block * order_of_block), buffer_block, size_block);
+        else
+            memcpy(buffer_file + (size_block * order_of_block), buffer_block, size_block - (file_size % size_block));
+
+        blockToBitmap(bitmap_buffer, order_of_block);
     }
     else
     {
-        for (int i = 0; i < file_size % size_block; i++)
-            buffer_file[(size_block * order_of_block) + i] = buffer_block[i];
+        printf("Blok už mam.\n");
     }
 
     free(buffer_block);
 }
 
-void connectToSeeder(struct client *begin_client_list, int size_peer_list, struct peer *peer_list)
+struct client *connectToSeeder(struct client *begin_client_list, int size_peer_list, struct peer *peer_list)
 {
     printf("SEED");
     struct sockaddr_in adresa;
+    bzero(&adresa, sizeof(struct sockaddr_in));
     adresa.sin_family = AF_INET;
-    bzero((char *)&adresa, sizeof(struct sockaddr_in));
 
     for (int i = 0; i < size_peer_list; i++)
     {
@@ -698,43 +767,49 @@ void connectToSeeder(struct client *begin_client_list, int size_peer_list, struc
             continue;
         }
 
-        if (!begin_client_list)
-            begin_client_list = new_client;
-        else
-            newClientToList(begin_client_list, new_client);
+        begin_client_list = newClientToList( begin_client_list, new_client);
 
         printf("Pripojene !\n");
     }
+
+    return begin_client_list;
 }
 
-void newClientToList(struct client *client_list, struct client *new_client)
+struct client *newClientToList(struct client *client_list, struct client *new_client)
 {
+
+    if (client_list == 0)
+        return new_client;
+
+    struct client * start = client_list;
 
     while (client_list->next != 0)
         client_list = client_list->next;
 
     client_list->next = new_client;
+
+    return start;
 }
 
-struct client *deleteClient(struct client *begin_client_list, int client_order)
+struct client *deleteClient(struct client *begin_client_list, struct client *delete_client)
 {
-    if (!client_order)
+    if (memcmp(begin_client_list, delete_client, sizeof(struct client)) == 0)
     {
-        free(begin_client_list);
+        free(delete_client);
         return 0;
     }
 
-    struct client *temp;
-    client_order--;
-    for (; client_order != 0; client_order--)
-        begin_client_list = begin_client_list->next;
+    for (struct client *temp = begin_client_list; temp != 0; temp = temp->next)
+    {
+        if (memcmp(temp->next, delete_client, sizeof(struct client)) == 0)
+        {
+            temp->next = temp->next->next;
+            free(temp->next);
+            return temp;
+        }
+    }
 
-    temp = begin_client_list->next;
-    begin_client_list->next = temp->next;
-
-    free(temp);
-
-    return begin_client_list->next;
+    return 0;
 }
 
 void initMasterFD(int *master_fd, int fd_server)
@@ -745,7 +820,6 @@ void initMasterFD(int *master_fd, int fd_server)
         exit(-1);
     }
 
-    
     int opt = 1;
     if (setsockopt(*master_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) < 0)
     {
@@ -767,16 +841,8 @@ void initMasterFD(int *master_fd, int fd_server)
 
         addressMaster.sin_port = htons(random_port);
         int error = bind(*master_fd, (struct sockaddr *)&addressMaster, sizeof(addressMaster));
-        /*
-        if ((error > 0) && (error != EADDRINUSE))
-        {
-            perror("Bind Error");
-            exit(-5);
-        }
-        else
-            break;*/
 
-        if(error < 0 && errno != EADDRINUSE)
+        if (error < 0 && errno != EADDRINUSE)
             perror("Bind chyba :");
         else if (error > 0)
             break;
@@ -799,19 +865,92 @@ void initMasterFD(int *master_fd, int fd_server)
 
 char isFull(char *bitmap, int size_bitmap, int number_of_block)
 {
+
     for (int i = 0; i < size_bitmap - 1; i++)
     {
-        if (bitmap[i] != SCHAR_MAX)
+        for (int o = 0; o < 8; o++)
+        {
+            if ((!!((bitmap[i] << o) & 0x80)) != 1)
+                return 0;
+        }
+    }
+
+    for (int i = 0; i < ((number_of_block % 8) ? (number_of_block % 8) : 8); i++)
+    {
+        int temp = (!!((bitmap[size_bitmap - 1] >> i) & 0x1));
+        if (temp != 1)
             return 0;
     }
 
-    char last_block = bitmap[size_bitmap - 1];
-    char temp = 1;
+    return 1;
+}
 
-    temp << ((8 % number_of_block) - 1);
+int numberOfBlock(int size_file, int size_block)
+{
+    int temp = (size_file - (size_file % size_block)) / size_block;
+    if ((size_file % size_block))
+        temp++;
 
-    if (last_block != temp)
-        return 0;
-    else
+    return temp;
+}
+
+int sizeBitmap(int number_of_block)
+{
+    return (number_of_block + (8 - (number_of_block % 8))) / 8;
+}
+
+void statsRequest(int socket_fd, int my_stat)
+{
+    char buffer[2];
+    buffer[0] = (enum CLIENT)STATS_RESPONSE;
+    buffer[1] = my_stat;
+
+    write_to_fd(socket_fd, buffer, sizeof(buffer));
+}
+
+void bitmapRequest(int socket_fd, char *bitmap_buffer, int size_bitmap)
+{
+    char *buffer = (char *)malloc(sizeof(char) + size_bitmap);
+    printf("Size bitmap : %d\n", size_bitmap);
+    buffer[0] = (enum CLIENT)BITMAP_RESPONSE;
+    memcpy(buffer + 1, bitmap_buffer, size_bitmap);
+    write_to_fd(socket_fd, buffer, sizeof(char) + size_bitmap);
+
+    printf("My bitmap :");
+    for (int i = 0; i < size_bitmap; i++)
+        for (int o = 0; o < 8; o++)
+            printf("%d", !!((bitmap_buffer[i] << o) & 128));
+    printf("\n");
+
+    free(buffer);
+}
+
+char blockInBitmap(char *bitmap_buffer, int order_of_block)
+{
+    int temp = (order_of_block < 8) ? 0 : (order_of_block - (order_of_block % 8)) / 8;
+
+    if ((!!((bitmap_buffer[temp] >> (order_of_block % 8)) & 0x1)) == 1)
         return 1;
+    else
+        return 0;
+}
+
+void blockToBitmap(char *bitmap_buffer, int order_of_block)
+{
+    int temp;
+
+    if (order_of_block < 8)
+        temp = 0;
+    else
+        temp = (order_of_block - (order_of_block % 8)) / 8;
+
+    bitmap_buffer[temp] += (1 << (order_of_block % 8));
+}
+
+void printBitmap(char *bitmap_buffer, int size_bitmap)
+{
+    for (int i = 0; i < 2; i++)
+        for (int o = 0; o < 8; o++)
+            printf("%d", !!((bitmap_buffer[i] << o) & 128));
+    printf("\n");
 }

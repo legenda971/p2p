@@ -72,7 +72,7 @@ int main(int argc, char **argv)
 
             for (int i = 0; i < size_peer_list; i++)
             {
-                if (!memcmp(&new_peer, peer_list + (sizeof(struct peer) * i), sizeof(struct peer)))
+                if (!memcmp( &new_peer, &peer_list[i], sizeof(struct peer)))
                 {
                     while (i != (size_peer_list - 1))
                     {
@@ -84,7 +84,7 @@ int main(int argc, char **argv)
                     break;
                 }
 
-                if (i == size_peer_list - 1)
+                if (i == (size_peer_list - 1))
                     printf("Database - Peer %d.%d.%d.%d:%d sa nenasiel\n", new_peer.ip[0], new_peer.ip[1], new_peer.ip[2], new_peer.ip[3], new_peer.port);
             }
 

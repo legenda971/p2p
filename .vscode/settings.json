@@ -1,5 +1,6 @@
 {
     "files.associations": {
-        "peer.h": "c"
+        "peer.h": "c",
+        "database.h": "c"
     }
 }

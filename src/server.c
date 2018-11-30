@@ -16,12 +16,12 @@
 #include "define/peer.h"
 
 #define DEFAULT_LISTEN_PORT 5320
-#define SEMAPHORE_NAME "MySemapnore3"
+#define SEMAPHORE_NAME "MySemapnore4"
 
 void closeSocket(int Socket);
 void newMetadata(int read_socket, int write_pipe, sem_t *semaphore);
 void newPeer(int read_socket, int write_pipe, sem_t *semaphore, struct sockaddr_in *addres, unsigned short * port);
-void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres);
+void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres, unsigned short port);
 void socketAdressToPeer(struct peer *temp, struct sockaddr_in *address);
 void downloadPeerList(int write_pipe, int read_pipe, sem_t *semaphore, int socket_fd);
 void downloadMetadata(int write_pipe, int read_pipe, sem_t *semaphore, int socket_fd);
@@ -150,12 +150,14 @@ int main(int argc, char **argv)
             closeSocket(socketListen);
             char request_form_client;
             unsigned short port = 0;
+            char usePeer = 0;
             while (1)
             {
                 if ((read(socketClient, &request_form_client, sizeof(request_form_client))) <= 0)
                 {
                     perror("Server - Chyba pri citani zo Socketu");
-                    deletePeer(write_fd, mutex, &addressClient);
+                    if(usePeer)
+                        deletePeer(write_fd, mutex, &addressClient, port);
                     exit(-2);
                 }
 
@@ -175,6 +177,7 @@ int main(int argc, char **argv)
 
                 case NEW_PEER:
                     newPeer(socketClient, write_fd, mutex, &addressClient, &port);
+                    usePeer = 1;
                     break;
                 }
             }
@@ -259,7 +262,7 @@ void newPeer( int read_socket, int write_pipe, sem_t *semaphore, struct sockaddr
     printf("Server - Vystupujem z kritickej casti\n");
 }
 
-void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres)
+void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres, unsigned short port)
 {
     sem_wait(semaphore);
     printf("Server - Vstupujem do kritickej casti\n");
@@ -267,7 +270,9 @@ void deletePeer(int write_pipe, sem_t *semaphore, struct sockaddr_in *addres)
 
     char buffer[sizeof(struct peer) + 1];
     buffer[0] = (enum request)DELETE_PEER;
-    socketAdressToPeer((struct peer *)(buffer + 1), addres);
+
+    memcpy(((struct peer *)(buffer + sizeof(char)))->ip, &(addres->sin_addr.s_addr), sizeof(((struct peer *)(buffer + sizeof(char)))->ip));
+    ((struct peer *)(buffer + sizeof(char)))->port = port;
 
     if (write(write_pipe, buffer, sizeof(buffer)) < 0)
     {
