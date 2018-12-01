@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <limits.h> /* SCHAR_MAX */
+#include <dirent.h>
 
 #include "define/metadata.h"
 #include "define/request_respons/database.h"
@@ -27,12 +28,13 @@ void zoznamPeerov(WINDOW *window, int socket_fd, int y_middle, int x_middle);
 void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle);
 void downloadMetadata(WINDOW *window, int socket_fd, int y_middle, int x_middle);
 void downloadedFile(WINDOW *window, int socked_fd, int y_middle, int x_middle);
-void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_buffer, char *bitmap_buffer);
+void thread_wrapper(void * arguments);
+void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_buffer, char *bitmap_buffer, FILE *file, double * complete);
 void sendBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block, int file_size);
 void saveBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block, int file_size, char *bitmap_buffer);
 char isFull(char *bitmap, int size_bitmap, int number_of_block);
 struct client *newClientToList(struct client *client_list, struct client *new_client); // return poiter to begin list
-struct client *deleteClient(struct client *begin_client_list, struct client *delete_client);
+void deleteClient(struct client **begin_client_list, struct client *delete_client);
 void initMasterFD(int *master_fd, int fd_server);
 struct client *connectToSeeder(struct client *begin_client_list, int size_peer_list, struct peer *peer_list);
 
@@ -46,13 +48,27 @@ char blockInBitmap(char *bitmap_buffer, int order_of_block);
 void blockToBitmap(char *bitmap_buffer, int order_of_block);
 void printBitmap(char *bitmap_buffer, int size_bitmap);
 
+int sizeFile(const char * file_name);
+char * selectMenu( WINDOW * window, int y_middle, int x_middle, char dir_or_file);
+
 typedef struct downloadingFile
 {
     struct metadata _metadata;
     char complete;     // V percentach
     pthread_t *thread; // Thread ktory stahuje
+
     struct downloadingFile *next;
-} downloadingFile;
+};
+
+struct threadArguments 
+{
+    int server_fd;
+    struct metadata *metadata;
+    char *file_buffer;
+    char *bitmap_buffer;
+    FILE *file;
+    double * complete;
+};
 
 typedef struct client
 {
@@ -154,6 +170,7 @@ int main(int argc, char **argv)
                 break;
 
             case 2:
+                //downloadingFile();
                 //downloadedFile(menuwin, socketListen, y_middle, x_middle);
                 //zoznamPeerov(menuwin, socketListen, y_middle, x_middle);
                 break;
@@ -243,10 +260,28 @@ void downloadMetadata(WINDOW *window, int socket_fd, int y_middle, int x_middle)
 
     memset(bitmap_buffer, 0, (pocet_blokov + (8 - (pocet_blokov % 8))) / 8);
 
-    thread_downloaingFile(socket_fd, &new_metadata, file_buffer, bitmap_buffer);
+    char * dir = selectMenu(window, y_middle, x_middle, 0);
+    strcpy( dir + strlen(dir), "/");
+    strcpy( dir + strlen(dir), new_metadata.name);
+
+    FILE *file;
+    if ((file = fopen( dir, "wb")) < 0)
+        exit(0);
+
+    free( dir);
+
+    double complete;
+
+    thread_downloaingFile(socket_fd, &new_metadata, file_buffer, bitmap_buffer, file, &complete);
 }
 
-void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_buffer, char *bitmap_buffer)
+void thread_wrapper(void * arguments)
+{
+    struct threadArguments * arg = (struct threadArguments *)arguments;
+    thread_downloaingFile(arg->server_fd, arg->metadata, arg->file_buffer, arg->bitmap_buffer, arg->file, arg->complete);
+}
+
+void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_buffer, char *bitmap_buffer, FILE *file, double * complete)
 {
     endwin();
     int master_fd;
@@ -271,6 +306,8 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
 
     /* Pripajanie sa na seederov */
     begin_client_list = connectToSeeder(begin_client_list, size_peer_list, peer_list);
+
+    free(peer_list);
 
     /* Init Master Socket */
     if ((master_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -340,6 +377,8 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
 
     int max_fd;
     fd_set readfd, writefd;
+    char *request_bitmap = (char *)malloc(size_bitmap);
+    bzero(request_bitmap, size_bitmap);
     while (1)
     {
         FD_ZERO(&readfd);
@@ -352,22 +391,15 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
         struct client *temp = begin_client_list;
         while (temp != 0)
         {
-            FD_SET(temp->fd_socket, &readfd);
-            FD_SET(temp->fd_socket, &writefd);
-            if (temp->fd_socket > max_fd)        /*
-        if ((error > 0) && (error != EADDRINUSE))
-        {
-            perror("Bind Error");
-            exit(-5);
-        }
-        else
-            break;*/
+            FD_SET( temp->fd_socket, &readfd);
+            FD_SET( temp->fd_socket, &writefd);
+            if (temp->fd_socket > max_fd)
                 max_fd = temp->fd_socket;
 
             temp = temp->next;
         }
 
-        sleep(1);
+        //sleep(1);
         //printf("---------------------------------\n");
         int activity = select(max_fd + 1, &readfd, &writefd, NULL, &tv);
 
@@ -407,9 +439,14 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
                 if (read(temp->fd_socket, &request, sizeof(request)) == 0)
                 {
                     printf("Klient sa odpojil\n");
-                    temp = deleteClient(begin_client_list, temp);
+
+                    deleteClient(&begin_client_list, temp);
+
                     if (!temp)
+                    {
+                        begin_client_list = 0;
                         break;
+                    }
                     else
                         continue;
                 }
@@ -464,16 +501,44 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
                     if (!isFull(bitmap_buffer, size_bitmap, number_of_block))
                     {
                         my_stat = (enum CLIENT)DOWNLOADING;
-                        printf("KAPPA - Stahujme\n");
+
+                        /* Downloaded block */
+                        int size = 0;
+                        for (int i = 0; i < size_bitmap - 1; i++)
+                        {
+                            for (int o = 0; o < 8; o++)
+                            {
+                                if ((!!((bitmap_buffer[i] << o) & 0x80)) == 1)
+                                    size++;
+                            }
+                        }
+
+                        for (int i = 0; i < ((number_of_block % 8) ? (number_of_block % 8) : 8); i++)
+                        {
+                            int temp = (!!((bitmap_buffer[size_bitmap - 1] >> i) & 0x1));
+                            if (temp == 1)
+                                size++;
+                        }
+
+                        *complete = (((double)size / (double)number_of_block) * 100);
                     }
                     else
                     {
+                        /*After download file*/
+
+                        *complete = 100;
+
+                        for (struct client *_temp = begin_client_list; _temp != 0; _temp = _temp->next)
+                            free(_temp->bitmap);
+
                         my_stat = (enum CLIENT)DOWNLOADED;
-                        printf("KAPPA - Stiahnute !\n");
-                        char *buffer = (char *)malloc(metadata->file_size + 1);
-                        memcpy(buffer, file_buffer, metadata->file_size);
-                        buffer[metadata->file_size] = 0;
-                        printf("%s\n", buffer);
+
+                        if (fwrite(file_buffer, metadata->file_size, 1, file) < 0)
+                        {
+                            perror("Chyba pri zapise do suboru :");
+                        }
+
+                        fclose(file);
                     }
                     break;
 
@@ -489,8 +554,6 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
             continue;
 
         /* Request to client */
-        char *request_bitmap = (char *)malloc(size_bitmap);
-        bzero(request_bitmap, size_bitmap);
         for (struct client *temp = begin_client_list; temp != 0; temp = temp->next)
         {
             if (FD_ISSET(temp->fd_socket, &writefd))
@@ -548,35 +611,12 @@ void thread_downloaingFile(int server_fd, struct metadata *metadata, char *file_
 
 void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
 {
-    int akcia;
-    wclear(window);
-    box(window, 0, 0);
-    mvwprintw(window, y_middle - 1, x_middle - (int)(27 / 2), "Prosim zadajte meno suboru");
-
-    char name_dir[50];
-    memset(name_dir, 0, sizeof(name_dir));
-
-    while (akcia = wgetch(window))
-    {
-        /* ENTER */
-        if (akcia == 10)
-            break;
-
-        /* BACKSPACE */
-        if (akcia == 263)
-        {
-            name_dir[strlen(name_dir) - 1] = 0;
-            mvwprintw(window, y_middle, x_middle - (int)(strlen(name_dir) / 2), "          ");
-        }
-        else
-            name_dir[strlen(name_dir)] = akcia;
-
-        mvwprintw(window, y_middle, x_middle - (int)(strlen(name_dir) / 2), " %s", name_dir);
-        wrefresh(window);
-    }
+    char name_file[50];
+    memset(name_file, 0, sizeof(name_file));
+    char * currentDir = selectMenu( window, y_middle, x_middle, 1);
 
     struct stat file_stat;
-    if (stat(name_dir, &file_stat) == -1)
+    if (stat( currentDir, &file_stat) == -1)
     {
         wattron(window, A_REVERSE);
         mvwprintw(window, y_middle + 1, x_middle - (int)(66 / 2), "2. ERROR - Subor sa neda otvorit. Stlacte ENTER pre navrat do menu .");
@@ -585,14 +625,32 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
             ;
     }
 
-    FILE *file = fopen(name_dir, "rb");
-
     int velkost_bloku = 1;
     int pocet_blokov;
     wclear(window);
 
+    FILE *file;
+    if((file = fopen( currentDir, "rb")) <= 0)
+    {
+        wclear(window);
+        endwin();
+        perror("Subor :");
+        exit(0);
+    }
+
+    /* FILE name */
+    int size_len = strlen(currentDir);
+    for(int i = 0; i < size_len; i++)
+    {
+        if(currentDir[size_len - i] == '/')
+        {
+            strcpy( name_file, &currentDir[size_len - i + 1]);
+            break;
+        }
+    }
+
     /* Vyber velkosti bloku */
-    akcia = 0;
+    int akcia = 0;
     do
     {
 
@@ -613,7 +671,7 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
         wclear(window);
         box(window, 0, 0);
 
-        mvwprintw(window, y_middle - 2, x_middle - 10, "Meno suboru\t: %s", name_dir);
+        mvwprintw(window, y_middle - 2, x_middle - 10, "Meno suboru\t: %s", name_file);
         mvwprintw(window, y_middle - 1, x_middle - 10, "Velkost suboru\t: %d", file_stat.st_size);
         mvwprintw(window, y_middle, x_middle - 10, "Pocet blokov\t: %d", pocet_blokov);
         mvwprintw(window, y_middle + 1, x_middle - 10, "Velkost bloku\t: %d", velkost_bloku);
@@ -627,7 +685,7 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
     struct metadata new_metadata;
     new_metadata.size_block = velkost_bloku;
     new_metadata.file_size = file_stat.st_size;
-    strncpy(new_metadata.name, name_dir, sizeof(new_metadata.name));
+    strncpy(new_metadata.name, name_file, sizeof(new_metadata.name));
 
     while ((akcia = wgetch(window)) != 10)
         ;
@@ -654,7 +712,13 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
     char *file_buffer = (char *)malloc(new_metadata.file_size);
     char *bitmap_buffer = (char *)malloc(size_bitmap);
 
-    fread(file_buffer, new_metadata.file_size, 1, file);
+    if(fread( file_buffer, new_metadata.file_size, 1, file) < 0)
+    {
+        perror("Chyba pri citani :");
+        exit(0);
+    }
+
+    fclose(file);
 
     /* Set bit map to 1 */
 
@@ -676,7 +740,11 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle)
         bitmap_buffer[size_bitmap - 1]++;
     }
 
-    thread_downloaingFile(fd_server, &new_metadata, file_buffer, bitmap_buffer);
+    free(currentDir);
+
+
+    double complete;
+    thread_downloaingFile(fd_server, &new_metadata, file_buffer, bitmap_buffer, NULL, &complete);
 }
 
 void sendBlock(int wr_fd, char *buffer_file, int number_of_block, int size_block, int file_size)
@@ -744,7 +812,7 @@ struct client *connectToSeeder(struct client *begin_client_list, int size_peer_l
     for (int i = 0; i < size_peer_list; i++)
     {
         struct client *new_client = (struct client *)malloc(sizeof(struct client));
-        bzero(new_client, sizeof(sizeof(struct client)));
+        bzero( new_client, sizeof(struct client));
 
         new_client->fd_socket = socket(AF_INET, SOCK_STREAM, 0);
         if (new_client->fd_socket < 0)
@@ -767,7 +835,7 @@ struct client *connectToSeeder(struct client *begin_client_list, int size_peer_l
             continue;
         }
 
-        begin_client_list = newClientToList( begin_client_list, new_client);
+        begin_client_list = newClientToList(begin_client_list, new_client);
 
         printf("Pripojene !\n");
     }
@@ -781,7 +849,7 @@ struct client *newClientToList(struct client *client_list, struct client *new_cl
     if (client_list == 0)
         return new_client;
 
-    struct client * start = client_list;
+    struct client *start = client_list;
 
     while (client_list->next != 0)
         client_list = client_list->next;
@@ -791,25 +859,28 @@ struct client *newClientToList(struct client *client_list, struct client *new_cl
     return start;
 }
 
-struct client *deleteClient(struct client *begin_client_list, struct client *delete_client)
+void deleteClient(struct client **begin_client_list, struct client *delete_client)
 {
-    if (memcmp(begin_client_list, delete_client, sizeof(struct client)) == 0)
+    if (memcmp(*begin_client_list, delete_client, sizeof(struct client)) == 0)
     {
+        *begin_client_list = delete_client->next;
+        free(delete_client->bitmap);
         free(delete_client);
-        return 0;
+        return;
     }
 
-    for (struct client *temp = begin_client_list; temp != 0; temp = temp->next)
+    for (struct client *temp = *begin_client_list; temp != 0; temp = temp->next)
     {
         if (memcmp(temp->next, delete_client, sizeof(struct client)) == 0)
         {
             temp->next = temp->next->next;
+            free(temp->next->bitmap);
             free(temp->next);
-            return temp;
+            return;
         }
     }
 
-    return 0;
+    return;
 }
 
 void initMasterFD(int *master_fd, int fd_server)
@@ -953,4 +1024,157 @@ void printBitmap(char *bitmap_buffer, int size_bitmap)
         for (int o = 0; o < 8; o++)
             printf("%d", !!((bitmap_buffer[i] << o) & 128));
     printf("\n");
+}
+
+int sizeFile(const char * file_name)
+{
+    struct stat file_stat;
+    stat( file_name, &file_stat);
+
+    return file_stat.st_size;
+}
+
+char * selectMenu( WINDOW * window, int y_middle, int x_middle, char dir_or_file)
+{
+    struct dirent **namelist;
+    int size_namelist;
+    char * currentDir = (char *)malloc(sizeof(char) * 256);
+    bzero(currentDir, sizeof(char) * 256);
+    currentDir[0] = '.';
+
+    if ((size_namelist = scandir(currentDir, &namelist, NULL, alphasort)) == -1)
+    {
+        perror("scandir");
+        exit(EXIT_FAILURE);
+    }
+
+    int akcia;
+    int selected = 0;
+
+    while (1)
+    {
+        wclear(window);
+        box(window, 0, 0);
+        mvwprintw(window, 1, 2, "%s", currentDir);
+
+        wattron(window, A_REVERSE);
+        if(dir_or_file)
+            mvwprintw(window, 1,  x_middle - 14, "Select FILE witch [ ENTER ]");
+        else
+            mvwprintw(window, 1,  x_middle - 16, "Select actually DIR witch [ x ]");
+
+        wattroff(window, A_REVERSE);
+        
+
+        mvwprintw(window, 3,  x_middle - 15, "%-15s | TYPE | SIZE", "NAME");
+        mvwprintw(window, 4,  x_middle - 15, "------------------------------");
+
+        for (int i = 0; i < size_namelist; i++)
+        {
+            if (i == selected)
+                wattron(window, A_REVERSE);
+
+            char type[10];
+            /* TYPE */
+            switch (namelist[i]->d_type)
+            {
+                case DT_DIR:
+                    strcpy(type, "DIR ");
+                    break;
+
+                case DT_REG:
+                    strcpy(type, "FILE");
+                    break;
+
+            default:
+                strcpy(type, "DT_DEF");
+                break;
+            }
+
+            char nameFile[256];
+            strcpy(nameFile, currentDir);
+            strcpy(nameFile + strlen(nameFile), "/");
+            strcpy(nameFile + strlen(nameFile), namelist[i]->d_name);
+
+            mvwprintw(window, i + 5, x_middle - 15, "%-15s | %s | %d", namelist[i]->d_name, type, sizeFile(nameFile));
+            wattroff(window, A_REVERSE);
+        }
+
+        akcia = wgetch(window);
+
+        switch (akcia)
+        {
+        case KEY_UP:
+            if (selected > 0)
+                selected--;
+            break;
+        case KEY_DOWN:
+            if (selected < (size_namelist - 1))
+                selected++;
+            break;
+        default:
+            break;
+        }
+
+        /* ENTER */
+        if (akcia == 10)
+        {
+            int len = strlen(currentDir);
+
+            if((namelist[selected]->d_type == DT_REG) && dir_or_file)
+            {
+                strcpy(currentDir + len, "/");
+                strcpy(currentDir + len + 1, namelist[selected]->d_name);
+
+                for(int i = 0; i <size_namelist; i++)
+                    free(namelist[i]);
+                free(namelist);
+
+                return currentDir;
+            }
+
+            if (namelist[selected]->d_type == DT_DIR && selected != 0)
+            {
+                /* Slected .. */
+                if (selected == 1 && len != 1)
+                {
+                    char *temp = currentDir;
+
+                    while (*temp)
+                        temp++;
+
+                    while (*temp != '/')
+                    {
+                        *temp = 0;
+                        temp--;
+                    }
+
+                    *temp = 0;
+                }
+                else
+                {
+                    strcpy(currentDir + len, "/");
+                    strcpy(currentDir + len + 1, namelist[selected]->d_name);
+                }
+
+                if ((size_namelist = scandir(currentDir, &namelist, NULL, alphasort)) == -1)
+                {
+                    perror("scandir");
+                    exit(EXIT_FAILURE);
+                }
+
+                selected = 0;
+                mvwprintw(window, 1, 2, "%s", currentDir);
+            }
+        }
+        else if((akcia == 'x') && !dir_or_file)
+        {
+            for(int i = 0; i <size_namelist; i++)
+                    free(namelist[i]);
+                free(namelist);
+            
+            return currentDir;
+        }
+        wrefresh(window);
+    }
 }

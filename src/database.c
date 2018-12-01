@@ -76,7 +76,8 @@ int main(int argc, char **argv)
                 {
                     while (i != (size_peer_list - 1))
                     {
-                        memcpy(peer_list + (sizeof(struct peer) * i), peer_list + (sizeof(struct peer) * i) + 1, sizeof(struct peer));
+                        memcpy( &peer_list[i], &peer_list[i + 1], sizeof(struct peer));
+                        i++;
                     }
                     size_peer_list--;
 
@@ -145,6 +146,7 @@ int main(int argc, char **argv)
             break;
 
         case METADATA:
+            printf("Database - Posielam metadata.\nn");
             if (write(write_fd, &meta_data, sizeof(struct metadata)) < 0)
             {
                 perror("DB - chyba pri nacitani z fd");

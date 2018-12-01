@@ -16,7 +16,7 @@
 #include "define/peer.h"
 
 #define DEFAULT_LISTEN_PORT 5320
-#define SEMAPHORE_NAME "MySemapnore4"
+#define SEMAPHORE_NAME "MySemapnore5"
 
 void closeSocket(int Socket);
 void newMetadata(int read_socket, int write_pipe, sem_t *semaphore);
@@ -190,7 +190,6 @@ int main(int argc, char **argv)
     }
     printf("Server - Vypina sa.\n");
 
-    sem_close(&mutex);
     exit(0);
 }
 
