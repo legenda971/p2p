@@ -1,7 +1,7 @@
 all:
 	gcc -o server src/server.c -lpthread -g
 	gcc -o database src/database.c -g
-	gcc -o client src/client.c -lncurses -lm -g
+	gcc -o client src/client.c -lncurses -lm -g -lpthread
 
 server:
 	gcc -o server.o src/server.c -lpthread
