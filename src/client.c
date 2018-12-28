@@ -14,6 +14,8 @@
 #include <limits.h> /* SCHAR_MAX */
 #include <dirent.h>
 #include <pthread.h>
+#include <signal.h>
+#include <time.h>
 
 #include "define/metadata.h"
 #include "define/request_respons/database.h"
@@ -77,6 +79,8 @@ char *selectMenu(WINDOW *window, int y_middle, int x_middle, char dir_or_file);
 void downloadedFile(WINDOW *window, int y_middle, int x_middle, struct downloadingFile *begin_downloading_file);
 void downloadMetadata(WINDOW *window, int socket_fd, int y_middle, int x_middle, struct downloadingFile **begin_downloading_file);
 void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle, struct downloadingFile **begin_downloading_file);
+timer_t vytvorCasovac(int);
+void spustiCasovac(timer_t, int);
 
 int main(int argc, char **argv)
 {
@@ -124,6 +128,7 @@ int main(int argc, char **argv)
 
     int akcia;
     int selected = 0;
+    timer_t casovac;
     while (1)
     {
         wclear(menuwin);
@@ -170,8 +175,11 @@ int main(int argc, char **argv)
                 break;
 
             case 3:
+                casovac = vytvorCasovac(SIGKILL);
+                spustiCasovac(casovac, 5);
+                wclear(menuwin);
                 endwin();
-                exit(0);
+                //exit(0);
             default:
                 break;
             }
@@ -954,8 +962,7 @@ void downloadedFile(WINDOW *window, int y_middle, int x_middle, struct downloadi
         /* Size */
         int size = 0;
 
-
-        if(begin_downloading_file == 0)
+        if (begin_downloading_file == 0)
         {
             mvwprintw(window, y_middle, x_middle - 13, "Nestahuju sa ziadne subory.");
             continue;
@@ -964,20 +971,19 @@ void downloadedFile(WINDOW *window, int y_middle, int x_middle, struct downloadi
         mvwprintw(window, 2, x_middle - 24, "%-15s | PROGRES BAR | VELKOST SUBORU", "MENO SUBORU");
         mvwprintw(window, 3, x_middle - 24, "----------------------------------------------");
 
-
         struct downloadingFile *temp = begin_downloading_file;
         for (; temp != 0; temp = temp->next)
         {
             mvwprintw(window, 4 + size, x_middle - 24, "%-15s   [", temp->metadata.name);
 
             wattron(window, A_REVERSE);
-            
+
             char progres_bar[20];
             bzero(progres_bar, sizeof(progres_bar));
-            sprintf( progres_bar, "   %d%%   ", (int)temp->complete);
+            sprintf(progres_bar, "   %d%%   ", (int)temp->complete);
 
             int i = 0;
-            for(; i < ((int)temp->complete / 10); i++)
+            for (; i < ((int)temp->complete / 10); i++)
                 mvwprintw(window, 4 + size, x_middle - 5 + i, "%c", progres_bar[i]);
 
             wattroff(window, A_REVERSE);
@@ -1037,18 +1043,18 @@ void downloadMetadata(WINDOW *window, int socket_fd, int y_middle, int x_middle,
 
     (**begin_downloading_file).next = 0;
     (**begin_downloading_file).complete = 1;
-    memcpy( &(**begin_downloading_file).metadata, &new_metadata, sizeof(struct metadata));
+    memcpy(&(**begin_downloading_file).metadata, &new_metadata, sizeof(struct metadata));
 
     arg->server_fd = socket_fd;
     arg->metadata = (struct metadata *)malloc(sizeof(struct metadata));
-    memcpy( arg->metadata, &new_metadata, sizeof(struct metadata));
+    memcpy(arg->metadata, &new_metadata, sizeof(struct metadata));
 
     arg->file_buffer = file_buffer;
     arg->bitmap_buffer = bitmap_buffer;
     arg->file = file;
     arg->complete = &(**begin_downloading_file).complete;
 
-    pthread_create( &((**begin_downloading_file).thread), NULL, thread_wrapper, arg);
+    pthread_create(&((**begin_downloading_file).thread), NULL, thread_wrapper, arg);
 }
 
 void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle, struct downloadingFile **begin_downloading_file)
@@ -1188,7 +1194,7 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle, s
 
     (**begin_downloading_file).next = 0;
     (**begin_downloading_file).complete = 100;
-    memcpy( &(**begin_downloading_file).metadata, new_metadata, sizeof(struct metadata));
+    memcpy(&(**begin_downloading_file).metadata, new_metadata, sizeof(struct metadata));
 
     struct threadArguments *arg = (struct threadArguments *)malloc(sizeof(struct threadArguments));
 
@@ -1199,7 +1205,28 @@ void uploadMetadata(WINDOW *window, int fd_server, int y_middle, int x_middle, s
     arg->file = file;
     arg->complete = 100;
 
-    pthread_create( &((**begin_downloading_file).thread), NULL, thread_wrapper, arg);
+    pthread_create(&((**begin_downloading_file).thread), NULL, thread_wrapper, arg);
 
     return;
+}
+
+timer_t vytvorCasovac(int signal)
+{
+    struct sigevent kam;
+    kam.sigev_notify = SIGEV_SIGNAL;
+    kam.sigev_signo = signal;
+
+    timer_t casovac;
+    timer_create(CLOCK_REALTIME, &kam, &casovac);
+    return (casovac);
+}
+
+void spustiCasovac(timer_t casovac, int sekundy)
+{
+    struct itimerspec casik;
+    casik.it_value.tv_sec = sekundy;
+    casik.it_value.tv_nsec = 0;
+    casik.it_interval.tv_sec = 0;
+    casik.it_interval.tv_nsec = 0;
+    timer_settime(casovac, CLOCK_REALTIME, &casik, NULL);
 }
